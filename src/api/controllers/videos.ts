@@ -17,7 +17,10 @@ const MODEL_DRAFT_VERSIONS: { [key: string]: string } = {
   "jimeng-video-3.0-pro": "3.2.8",
   "jimeng-video-3.0": "3.2.8",
   "jimeng-video-2.0": "3.2.8",
-  "jimeng-video-2.0-pro": "3.2.8"
+  "jimeng-video-2.0-pro": "3.2.8",
+  // Seedance 模型
+  "seedance-2.0": "3.3.9",
+  "seedance-2.0-pro": "3.3.9",
 };
 
 const MODEL_MAP = {
@@ -25,8 +28,22 @@ const MODEL_MAP = {
   "jimeng-video-3.0-pro": "dreamina_ic_generate_video_model_vgfm_3.0_pro",
   "jimeng-video-3.0": "dreamina_ic_generate_video_model_vgfm_3.0",
   "jimeng-video-2.0": "dreamina_ic_generate_video_model_vgfm_lite",
-  "jimeng-video-2.0-pro": "dreamina_ic_generate_video_model_vgfm1.0"
+  "jimeng-video-2.0-pro": "dreamina_ic_generate_video_model_vgfm1.0",
+  // Seedance 多图智能视频生成模型
+  "seedance-2.0": "dreamina_seedance_40_pro",
+  "seedance-2.0-pro": "dreamina_seedance_40_pro",
 };
+
+// Seedance 模型的 benefit_type 映射
+const SEEDANCE_BENEFIT_TYPE_MAP: { [key: string]: string } = {
+  "seedance-2.0": "dreamina_video_seedance_20_pro",
+  "seedance-2.0-pro": "dreamina_video_seedance_20_pro",
+};
+
+// 判断是否为 Seedance 模型
+export function isSeedanceModel(model: string): boolean {
+  return model.startsWith("seedance-");
+}
 
 // 视频支持的分辨率和比例配置
 const VIDEO_RESOLUTION_OPTIONS: {
@@ -1049,4 +1066,410 @@ export async function generateVideo(
 
   logger.info(`视频生成成功，URL: ${videoUrl}`);
   return videoUrl;
+}
+
+/**
+ * Seedance 2.0 多图智能视频生成
+ * 支持多张图片与文本混合生成视频
+ *
+ * @param _model 模型名称
+ * @param prompt 提示词（支持 @1 @2 等引用图片占位符）
+ * @param options 选项
+ * @param refreshToken 刷新令牌
+ * @returns 视频URL
+ */
+export async function generateSeedanceVideo(
+  _model: string,
+  prompt: string,
+  {
+    ratio = "4:3",
+    resolution = "720p",
+    duration = 4,
+    filePaths = [],
+    files = [],
+  }: {
+    ratio?: string;
+    resolution?: string;
+    duration?: number;
+    filePaths?: string[];
+    files?: any[];
+  },
+  refreshToken: string
+) {
+  const model = getModel(_model);
+  const benefitType = SEEDANCE_BENEFIT_TYPE_MAP[_model] || "dreamina_video_seedance_20_pro";
+
+  // Seedance 2.0 默认时长为4秒
+  const actualDuration = duration || 4;
+
+  // 解析分辨率参数获取实际的宽高
+  const { width, height } = resolveVideoResolution(resolution, ratio);
+
+  logger.info(`Seedance 2.0 生成: 模型=${_model} 映射=${model} ${width}x${height} (${ratio}@${resolution}) 时长=${actualDuration}秒`);
+
+  // 检查积分
+  const { totalCredit } = await getCredit(refreshToken);
+  if (totalCredit <= 0)
+    await receiveCredit(refreshToken);
+
+  // 上传所有图片
+  let uploadedImages: Array<{uri: string, width: number, height: number}> = [];
+
+  // 处理上传的文件（multipart/form-data）
+  if (files && files.length > 0) {
+    logger.info(`Seedance: 开始处理 ${files.length} 个上传文件`);
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (!file || !file.filepath) {
+        logger.warn(`Seedance: 第 ${i + 1} 个文件无效，跳过`);
+        continue;
+      }
+
+      try {
+        logger.info(`Seedance: 开始上传第 ${i + 1} 个文件: ${file.originalFilename || file.filepath}`);
+        const buffer = fs.readFileSync(file.filepath);
+        const imageUri = await uploadImageBufferForVideo(buffer, refreshToken);
+
+        if (imageUri) {
+          uploadedImages.push({ uri: imageUri, width, height });
+          logger.info(`Seedance: 第 ${i + 1} 个文件上传成功: ${imageUri}`);
+        }
+      } catch (error) {
+        logger.error(`Seedance: 第 ${i + 1} 个文件上传失败: ${error.message}`);
+        if (i === 0) {
+          throw new APIException(EX.API_REQUEST_FAILED, `首张图片上传失败: ${error.message}`);
+        }
+      }
+    }
+  } else if (filePaths && filePaths.length > 0) {
+    logger.info(`Seedance: 开始上传 ${filePaths.length} 张图片`);
+
+    for (let i = 0; i < filePaths.length; i++) {
+      const filePath = filePaths[i];
+      if (!filePath) continue;
+
+      try {
+        logger.info(`Seedance: 开始上传第 ${i + 1} 张图片: ${filePath}`);
+        const imageUri = await uploadImageForVideo(filePath, refreshToken);
+
+        if (imageUri) {
+          uploadedImages.push({ uri: imageUri, width, height });
+          logger.info(`Seedance: 第 ${i + 1} 张图片上传成功: ${imageUri}`);
+        }
+      } catch (error) {
+        logger.error(`Seedance: 第 ${i + 1} 张图片上传失败: ${error.message}`);
+        if (i === 0) {
+          throw new APIException(EX.API_REQUEST_FAILED, `首张图片上传失败: ${error.message}`);
+        }
+      }
+    }
+  }
+
+  if (uploadedImages.length === 0) {
+    throw new APIException(EX.API_REQUEST_FAILED, 'Seedance 2.0 需要至少一张图片');
+  }
+
+  logger.info(`Seedance: 成功上传 ${uploadedImages.length} 张图片`);
+
+  // 构建 material_list（所有图片）
+  const materialList = uploadedImages.map((img, index) => ({
+    type: "",
+    id: util.uuid(),
+    material_type: "image",
+    image_info: {
+      type: "image",
+      id: util.uuid(),
+      source_from: "upload",
+      platform_type: 1,
+      name: "",
+      image_uri: img.uri,
+      width: img.width,
+      height: img.height,
+      format: "",
+      uri: img.uri,
+    }
+  }));
+
+  // 解析 prompt 中的图片占位符（@1, @2 等）并构建 meta_list
+  const metaList = buildMetaListFromPrompt(prompt, uploadedImages.length);
+
+  const componentId = util.uuid();
+  const submitId = util.uuid();
+  const draftVersion = MODEL_DRAFT_VERSIONS[_model] || "3.3.9";
+
+  // 计算视频宽高比
+  const gcd = (a: number, b: number): number => b === 0 ? a : gcd(b, a % b);
+  const divisor = gcd(width, height);
+  const aspectRatio = `${width / divisor}:${height / divisor}`;
+
+  const metricsExtra = JSON.stringify({
+    isDefaultSeed: 1,
+    originSubmitId: submitId,
+    isRegenerate: false,
+    enterFrom: "click",
+    position: "page_bottom_box",
+    functionMode: "omni_reference",
+    sceneOptions: JSON.stringify([{
+      type: "video",
+      scene: "BasicVideoGenerateButton",
+      modelReqKey: model,
+      videoDuration: actualDuration,
+      reportParams: {
+        enterSource: "generate",
+        vipSource: "generate",
+        extraVipFunctionKey: model,
+        useVipFunctionDetailsReporterHoc: true
+      },
+      materialTypes: [1]
+    }])
+  });
+
+  // 构建 Seedance 2.0 专用请求
+  const { aigc_data } = await request(
+    "post",
+    "/mweb/v1/aigc_draft/generate",
+    refreshToken,
+    {
+      params: {
+        aigc_features: "app_lip_sync",
+        web_version: "7.5.0",
+        da_version: draftVersion,
+      },
+      data: {
+        extend: {
+          root_model: model,
+          m_video_commerce_info: {
+            benefit_type: benefitType,
+            resource_id: "generate_video",
+            resource_id_type: "str",
+            resource_sub_type: "aigc"
+          },
+          m_video_commerce_info_list: [{
+            benefit_type: benefitType,
+            resource_id: "generate_video",
+            resource_id_type: "str",
+            resource_sub_type: "aigc"
+          }]
+        },
+        submit_id: submitId,
+        metrics_extra: metricsExtra,
+        draft_content: JSON.stringify({
+          type: "draft",
+          id: util.uuid(),
+          min_version: draftVersion,
+          min_features: ["AIGC_Video_UnifiedEdit"],
+          is_from_tsn: true,
+          version: draftVersion,
+          main_component_id: componentId,
+          component_list: [{
+            type: "video_base_component",
+            id: componentId,
+            min_version: "1.0.0",
+            aigc_mode: "workbench",
+            metadata: {
+              type: "",
+              id: util.uuid(),
+              created_platform: 3,
+              created_platform_version: "",
+              created_time_in_ms: String(Date.now()),
+              created_did: ""
+            },
+            generate_type: "gen_video",
+            abilities: {
+              type: "",
+              id: util.uuid(),
+              gen_video: {
+                type: "",
+                id: util.uuid(),
+                text_to_video_params: {
+                  type: "",
+                  id: util.uuid(),
+                  video_gen_inputs: [{
+                    type: "",
+                    id: util.uuid(),
+                    min_version: draftVersion,
+                    prompt: "",  // Seedance 2.0 prompt 在 meta_list 中
+                    video_mode: 2,
+                    fps: 24,
+                    duration_ms: actualDuration * 1000,
+                    idip_meta_list: [],
+                    unified_edit_input: {
+                      type: "",
+                      id: util.uuid(),
+                      material_list: materialList,
+                      meta_list: metaList
+                    }
+                  }],
+                  video_aspect_ratio: aspectRatio,
+                  seed: Math.floor(Math.random() * 1000000000),
+                  model_req_key: model,
+                  priority: 0
+                },
+                video_task_extra: metricsExtra
+              }
+            },
+            process_type: 1
+          }]
+        }),
+        http_common_info: {
+          aid: DEFAULT_ASSISTANT_ID,
+        },
+      },
+    }
+  );
+
+  const historyId = aigc_data.history_record_id;
+  if (!historyId)
+    throw new APIException(EX.API_IMAGE_GENERATION_FAILED, "记录ID不存在");
+
+  // 轮询获取结果（与普通视频相同的逻辑）
+  let status = 20, failCode, item_list = [];
+  let retryCount = 0;
+  const maxRetries = 60;
+
+  await new Promise((resolve) => setTimeout(resolve, 5000));
+
+  logger.info(`Seedance: 开始轮询视频生成结果，历史ID: ${historyId}`);
+
+  while (status === 20 && retryCount < maxRetries) {
+    try {
+      const result = await request("post", "/mweb/v1/get_history_by_ids", refreshToken, {
+        data: { history_ids: [historyId] },
+      });
+
+      // 尝试直接提取视频URL
+      const responseStr = JSON.stringify(result);
+      const videoUrlMatch = responseStr.match(/https:\/\/v[0-9]+-artist\.vlabvod\.com\/[^"\s]+/);
+      if (videoUrlMatch && videoUrlMatch[0]) {
+        logger.info(`Seedance: 提取到视频URL: ${videoUrlMatch[0]}`);
+        return videoUrlMatch[0];
+      }
+
+      if (!result.history_list || result.history_list.length === 0) {
+        retryCount++;
+        const waitTime = Math.min(2000 * (retryCount + 1), 30000);
+        await new Promise((resolve) => setTimeout(resolve, waitTime));
+        continue;
+      }
+
+      const historyData = result.history_list[0];
+      status = historyData.status;
+      failCode = historyData.fail_code;
+      item_list = historyData.item_list || [];
+
+      logger.info(`Seedance: 状态=${status}, 失败码=${failCode || '无'}`);
+
+      if (status === 30) {
+        const error = failCode === 2038
+          ? new APIException(EX.API_CONTENT_FILTERED, "内容被过滤")
+          : new APIException(EX.API_IMAGE_GENERATION_FAILED, `生成失败，错误码: ${failCode}`);
+        error.historyId = historyId;
+        throw error;
+      }
+
+      if (status === 20) {
+        const waitTime = 2000 * Math.min(retryCount + 1, 5);
+        await new Promise((resolve) => setTimeout(resolve, waitTime));
+      }
+
+      retryCount++;
+    } catch (error) {
+      if (error instanceof APIException) throw error;
+      logger.error(`Seedance: 轮询出错: ${error.message}`);
+      retryCount++;
+      await new Promise((resolve) => setTimeout(resolve, 2000 * (retryCount + 1)));
+    }
+  }
+
+  if (retryCount >= maxRetries && status === 20) {
+    const error = new APIException(EX.API_IMAGE_GENERATION_FAILED, "视频生成超时");
+    error.historyId = historyId;
+    throw error;
+  }
+
+  // 提取视频URL
+  let videoUrl = item_list?.[0]?.video?.transcoded_video?.origin?.video_url
+    || item_list?.[0]?.video?.play_url
+    || item_list?.[0]?.video?.download_url
+    || item_list?.[0]?.video?.url;
+
+  if (!videoUrl) {
+    const error = new APIException(EX.API_IMAGE_GENERATION_FAILED, "未能获取视频URL");
+    error.historyId = historyId;
+    throw error;
+  }
+
+  logger.info(`Seedance: 视频生成成功，URL: ${videoUrl}`);
+  return videoUrl;
+}
+
+/**
+ * 解析 prompt 中的图片占位符并构建 meta_list
+ * 支持格式: "使用 @1 图片，@2 图片做动画" -> [text, image(0), text, image(1), text]
+ */
+function buildMetaListFromPrompt(prompt: string, imageCount: number): Array<{meta_type: string, text?: string, material_ref?: {material_idx: number}}> {
+  const metaList: Array<{meta_type: string, text?: string, material_ref?: {material_idx: number}}> = [];
+
+  // 匹配 @1, @2, @图1, @图2, @image1 等格式
+  const placeholderRegex = /@(?:图|image)?(\d+)/gi;
+
+  let lastIndex = 0;
+  let match;
+
+  while ((match = placeholderRegex.exec(prompt)) !== null) {
+    // 添加占位符前的文本
+    if (match.index > lastIndex) {
+      const textBefore = prompt.substring(lastIndex, match.index);
+      if (textBefore.trim()) {
+        metaList.push({ meta_type: "text", text: textBefore });
+      }
+    }
+
+    // 添加图片引用
+    const imageIndex = parseInt(match[1]) - 1; // @1 对应 index 0
+    if (imageIndex >= 0 && imageIndex < imageCount) {
+      metaList.push({
+        meta_type: "image",
+        text: "",
+        material_ref: { material_idx: imageIndex }
+      });
+    }
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  // 添加剩余的文本
+  if (lastIndex < prompt.length) {
+    const remainingText = prompt.substring(lastIndex);
+    if (remainingText.trim()) {
+      metaList.push({ meta_type: "text", text: remainingText });
+    }
+  }
+
+  // 如果没有找到任何占位符，默认使用所有图片并附加整个prompt作为文本
+  if (metaList.length === 0) {
+    // 先添加所有图片引用
+    for (let i = 0; i < imageCount; i++) {
+      if (i === 0) {
+        metaList.push({ meta_type: "text", text: "使用" });
+      }
+      metaList.push({
+        meta_type: "image",
+        text: "",
+        material_ref: { material_idx: i }
+      });
+      if (i < imageCount - 1) {
+        metaList.push({ meta_type: "text", text: "和" });
+      }
+    }
+    // 添加描述文本
+    if (prompt && prompt.trim()) {
+      metaList.push({ meta_type: "text", text: `图片，${prompt}` });
+    } else {
+      metaList.push({ meta_type: "text", text: "图片生成视频" });
+    }
+  }
+
+  return metaList;
 }

@@ -7,3 +7,10 @@ node_modules
 .gitignore
 README.md
 *.tar.gz
+tmp
+*.png
+*.jpeg
+*.jpg
+*.mp4
+.ipynb_checkpoints
+curl*.txt

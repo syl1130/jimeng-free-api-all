@@ -3,7 +3,7 @@ import _ from 'lodash';
 import Request from '@/lib/request/Request.ts';
 import Response from '@/lib/response/Response.ts';
 import { tokenSplit } from '@/api/controllers/core.ts';
-import { generateVideo, DEFAULT_MODEL } from '@/api/controllers/videos.ts';
+import { generateVideo, generateSeedanceVideo, isSeedanceModel, DEFAULT_MODEL } from '@/api/controllers/videos.ts';
 import util from '@/lib/util.ts';
 
 export default {
@@ -27,7 +27,7 @@ export default {
 
             request
                 .validate('body.model', v => _.isUndefined(v) || _.isString(v))
-                .validate('body.prompt', _.isString)
+                .validate('body.prompt', v => _.isUndefined(v) || _.isString(v))
                 .validate('body.ratio', v => _.isUndefined(v) || _.isString(v))
                 .validate('body.resolution', v => _.isUndefined(v) || _.isString(v))
                 .validate('body.duration', v => {
@@ -35,10 +35,12 @@ export default {
                     // 对于 multipart/form-data，允许字符串类型的数字
                     if (isMultiPart && typeof v === 'string') {
                         const num = parseInt(v);
-                        return num === 5 || num === 10;
+                        // Seedance 支持 4 秒，普通视频支持 5 或 10 秒
+                        return num === 4 || num === 5 || num === 10;
                     }
                     // 对于 JSON，要求数字类型
-                    return _.isFinite(v) && (v === 5 || v === 10);
+                    // Seedance 支持 4 秒，普通视频支持 5 或 10 秒
+                    return _.isFinite(v) && (v === 4 || v === 5 || v === 10);
                 })
                 .validate('body.file_paths', v => _.isUndefined(v) || _.isArray(v))
                 .validate('body.filePaths', v => _.isUndefined(v) || _.isArray(v))
@@ -69,19 +71,41 @@ export default {
             // 兼容两种参数名格式：file_paths 和 filePaths
             const finalFilePaths = filePaths.length > 0 ? filePaths : file_paths;
 
-            // 生成视频
-            const videoUrl = await generateVideo(
-                model,
-                prompt,
-                {
-                    ratio,
-                    resolution,
-                    duration: finalDuration,
-                    filePaths: finalFilePaths,
-                    files: request.files, // 传递上传的文件
-                },
-                token
-            );
+            // 根据模型类型选择不同的生成函数
+            let videoUrl: string;
+            if (isSeedanceModel(model)) {
+                // Seedance 2.0 多图智能视频生成
+                // Seedance 默认时长为 4 秒，默认比例为 4:3
+                const seedanceDuration = finalDuration === 5 ? 4 : finalDuration; // 如果是默认的5秒，转为4秒
+                const seedanceRatio = ratio === "1:1" ? "4:3" : ratio; // 如果是默认的1:1，转为4:3
+
+                videoUrl = await generateSeedanceVideo(
+                    model,
+                    prompt,
+                    {
+                        ratio: seedanceRatio,
+                        resolution,
+                        duration: seedanceDuration,
+                        filePaths: finalFilePaths,
+                        files: request.files,
+                    },
+                    token
+                );
+            } else {
+                // 普通视频生成
+                videoUrl = await generateVideo(
+                    model,
+                    prompt,
+                    {
+                        ratio,
+                        resolution,
+                        duration: finalDuration,
+                        filePaths: finalFilePaths,
+                        files: request.files,
+                    },
+                    token
+                );
+            }
 
             // 根据response_format返回不同格式的结果
             if (response_format === "b64_json") {

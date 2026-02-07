@@ -47,7 +47,30 @@ export default class Request {
         this.query = ctx.query || {};
         this.params = ctx.params || {};
         this.body = ctx.request.body || {};
-        this.files = ctx.request.files || {};
+        // koa-body 的 files 可能是对象 { files: [File, File] } 或 { files: File }
+        // 需要统一转换为数组格式
+        const rawFiles = ctx.request.files;
+        if (rawFiles) {
+            if (Array.isArray(rawFiles)) {
+                this.files = rawFiles;
+            } else if (typeof rawFiles === 'object') {
+                // 遍历对象，提取所有文件
+                const filesArray: any[] = [];
+                for (const key in rawFiles) {
+                    const fileOrFiles = rawFiles[key];
+                    if (Array.isArray(fileOrFiles)) {
+                        filesArray.push(...fileOrFiles);
+                    } else if (fileOrFiles) {
+                        filesArray.push(fileOrFiles);
+                    }
+                }
+                this.files = filesArray;
+            } else {
+                this.files = [];
+            }
+        } else {
+            this.files = [];
+        }
         this.remoteIP = this.headers["X-Real-IP"] || this.headers["x-real-ip"] || this.headers["X-Forwarded-For"] || this.headers["x-forwarded-for"] || ctx.ip || null;
         this.time = Number(_.defaultTo(time, util.timestamp()));
     }

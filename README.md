@@ -1,11 +1,20 @@
 
 # Jimeng AI Free 服务
 
-支持即梦超强图像生成能力，包含最新 **jimeng-4.5**、**jimeng-4.1** 文生图模型、文生图、图生图功能，视频生成模型（目前官方每日赠送 66 积分，可生成 66 次），零配置部署，多路 token 支持。
+支持即梦超强图像生成能力，包含最新 **jimeng-4.5**、**jimeng-4.1** 文生图模型、文生图、图生图功能，视频生成模型（目前官方每日赠送 66 积分，可生成 66 次），**Seedance 2.0 多图智能视频生成**，零配置部署，多路 token 支持。
 
 与 OpenAI 接口完全兼容。
 
 ## 更新日志
+
+### 2026-02-07 v0.7 更新 - Seedance 2.0 多图智能视频生成
+- **新增 Seedance 2.0 模型**：支持多张图片混合生成视频
+  - `seedance-2.0`：多图智能视频生成模型
+  - `seedance-2.0-pro`：多图智能视频生成模型（专业版）
+- **多图混合提示词**：支持使用 `@1`、`@2` 等占位符引用上传的图片
+- **修复 multipart 文件上传**：优化 koa-body 配置，支持多文件上传
+- **安全漏洞修复**：移除未使用的 `build` 依赖包，升级其他依赖修复 19 个安全漏洞
+- **优化参数验证**：`prompt` 参数改为可选（Seedance 模型主要依赖图片）
 
 ### 2024-12-20 v0.6 更新 - 新增视频模型
 - **新增 jimeng-video-3.5-pro 模型**：最新视频生成模型，使用 `dreamina_ic_generate_video_model_vgfm_3.5_pro` 内部模型
@@ -139,6 +148,7 @@ docker run -it -d --init --name jimeng-free-api-all -p 8001:8000 -e TZ=Asia/Shan
 目前支持与 openai 兼容的 `/v1/chat/completions` 接口，可自行使用与 openai 或其他兼容的客户端接入接口，模型名称包括：
 - **文生图模型**：`jimeng-4.5`（推荐）、`jimeng-4.1`、`jimeng-4.0`、`jimeng-3.1`、`jimeng-3.0`、`jimeng-2.1`、`jimeng-2.0-pro`、`jimeng-2.0`、`jimeng-1.4`、`jimeng-xl-pro`
 - **视频生成模型**：`jimeng-video-3.5-pro`（最新）、`jimeng-video-3.0`、`jimeng-video-3.0-pro`、`jimeng-video-2.0`、`jimeng-video-2.0-pro`
+- **多图智能视频模型**：`seedance-2.0`、`seedance-2.0-pro`（支持多张图片混合生成视频）
 
 ### 模型映射表
 
@@ -146,6 +156,8 @@ docker run -it -d --init --name jimeng-free-api-all -p 8001:8000 -e TZ=Asia/Shan
 |-----------|-----------|------|
 | `jimeng-4.5` | `high_aes_general_v40l` | 最新模型，推荐使用 |
 | `jimeng-video-3.5-pro` | `dreamina_ic_generate_video_model_vgfm_3.5_pro` | 最新视频模型 |
+| `seedance-2.0` | `dreamina_seedance_40_pro` | 多图智能视频生成 |
+| `seedance-2.0-pro` | `dreamina_seedance_40_pro` | 多图智能视频生成（专业版） |
 | `jimeng-4.1` | `high_aes_general_v41` | 高质量模型 |
 | `jimeng-4.0` | `high_aes_general_v40` | 稳定版本 |
 | `jimeng-3.1` | `high_aes_general_v30l_art_fangzhou` | 艺术风格 |
@@ -219,6 +231,64 @@ Authorization: Bearer [sessionid]
 }
 ```
 可用视频模型：`jimeng-video-3.5-pro`（推荐）、`jimeng-video-3.0`、`jimeng-video-3.0-pro`、`jimeng-video-2.0`、`jimeng-video-2.0-pro`
+
+### Seedance 2.0 多图智能视频生成
+
+Seedance 2.0 是即梦推出的多图智能视频生成模型，支持上传多张图片并通过提示词描述生成视频。
+
+**POST /v1/videos/generations**
+
+**multipart/form-data 格式请求：**
+
+```bash
+curl -X POST "http://localhost:8000/v1/videos/generations" \
+  -H "Authorization: Bearer your_sessionid" \
+  -F "model=seedance-2.0" \
+  -F "prompt=@1 和 @2 两人开始跳舞" \
+  -F "ratio=4:3" \
+  -F "duration=4" \
+  -F "files=@/path/to/image1.jpg" \
+  -F "files=@/path/to/image2.jpg"
+```
+
+**JSON 格式请求（使用图片URL）：**
+
+```json
+{
+  "model": "seedance-2.0",
+  "prompt": "使用 @1 图片和 @2 图片，两人开始跳舞",
+  "ratio": "4:3",
+  "duration": 4,
+  "file_paths": [
+    "https://example.com/image1.jpg",
+    "https://example.com/image2.jpg"
+  ]
+}
+```
+
+**Seedance 参数说明：**
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| model | string | 是 | - | `seedance-2.0` 或 `seedance-2.0-pro` |
+| prompt | string | 否 | - | 提示词，使用 `@1`、`@2` 等引用图片 |
+| ratio | string | 否 | 4:3 | 宽高比：1:1, 4:3, 3:4, 16:9, 9:16 |
+| duration | number | 否 | 4 | 视频时长（秒），默认 4 秒 |
+| files | file[] | 是* | - | 上传的图片文件（multipart/form-data） |
+| file_paths | array | 是* | - | 图片URL数组（JSON格式） |
+
+> **注意**：`files` 和 `file_paths` 二选一，Seedance 模型至少需要一张图片。
+
+**提示词占位符说明：**
+
+- `@1` - 引用第一张上传的图片
+- `@2` - 引用第二张上传的图片
+- `@图1`、`@image1` - 同 `@1`
+
+**示例提示词：**
+- `"使用 @1 图片，人物开始跳舞"`
+- `"@1 和 @2 两个角色互相对话"`
+- `"让 @1 图片中的场景动起来，添加下雨效果"`
 
 
 ### 图像生成
@@ -403,6 +473,37 @@ curl -X POST http://localhost:8000/v1/videos/generations \
     "resolution": "720p",
     "duration": 5,
     "file_paths": ["https://example.com/first_frame.jpg"]
+  }'
+```
+
+**Seedance 2.0 多图视频生成（文件上传）：**
+
+```bash
+curl -X POST "http://localhost:8000/v1/videos/generations" \
+  -H "Authorization: Bearer your_sessionid_here" \
+  -F "model=seedance-2.0" \
+  -F "prompt=@1 和 @2 两人开始跳舞" \
+  -F "ratio=4:3" \
+  -F "duration=4" \
+  -F "files=@/path/to/image1.jpg" \
+  -F "files=@/path/to/image2.jpg"
+```
+
+**Seedance 2.0 多图视频生成（URL方式）：**
+
+```bash
+curl -X POST http://localhost:8000/v1/videos/generations \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your_sessionid_here" \
+  -d '{
+    "model": "seedance-2.0",
+    "prompt": "使用 @1 图片和 @2 图片，两人开始跳舞",
+    "ratio": "4:3",
+    "duration": 4,
+    "file_paths": [
+      "https://example.com/image1.jpg",
+      "https://example.com/image2.jpg"
+    ]
   }'
 ```
 

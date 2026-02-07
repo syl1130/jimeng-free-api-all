@@ -102,6 +102,18 @@ export default {
                         "object": "model",
                         "owned_by": "jimeng-free-api",
                         "description": "即梦AI视频生成模型 2.0 专业版"
+                    },
+                    {
+                        "id": "seedance-2.0",
+                        "object": "model",
+                        "owned_by": "jimeng-free-api",
+                        "description": "Seedance 2.0 多图智能视频生成模型（支持多张图片混合生成视频）"
+                    },
+                    {
+                        "id": "seedance-2.0-pro",
+                        "object": "model",
+                        "owned_by": "jimeng-free-api",
+                        "description": "Seedance 2.0 Pro 多图智能视频生成模型（支持多张图片混合生成视频，专业版）"
                     }
                 ]
             };
