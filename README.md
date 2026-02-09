@@ -335,7 +335,7 @@ jimeng-free-api-all/
 
 ## 效果展示
 
-![文生图效果](https://mypicture-1258720957.cos.ap-nanjing.myqcloud.com/Obsidian/image-20250910110743543.png)
+![image-20260209234137309](https://mypicture-1258720957.cos.ap-nanjing.myqcloud.com/Obsidian/image-20260209234137309.png)
 
 ![image-20260209230221386](https://mypicture-1258720957.cos.ap-nanjing.myqcloud.com/Obsidian/image-20260209230221386.png)
 
